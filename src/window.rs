@@ -4,16 +4,18 @@ use cosmic::iced::{
     platform_specific::shell::commands::popup::{destroy_popup, get_popup},
     widget::row,
     window::Id,
-    Limits, Task 
+    Limits, Task,
 };
 use cosmic::iced::{Alignment, Length};
 use cosmic::iced_runtime::core::window;
 use cosmic::Element;
 // Widgets we're going to use
 use cosmic::widget::{
-    autosize, button, container, horizontal_space, list_column, settings, text, toggler, vertical_space,
+    autosize, button, container, list_column, settings, text, text_input, toggler, vertical_space,
 };
 use once_cell::sync::Lazy;
+use std::env;
+use std::process::Command;
 
 // Every COSMIC Application and Applet MUST have an ID
 const ID: &str = "com.example.BasicApplet";
@@ -31,18 +33,21 @@ static AUTOSIZE_MAIN_ID: Lazy<cosmic::widget::Id> =
 *  Next we have our custom field that we will manipulate the value of based
 *  on the message we send.
 */
-#[derive(Default)]
 pub struct Window {
     core: Core,
     popup: Option<Id>,
     is_enabled: bool,
+    task_title: String,
+    debug_text: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub enum Message {
-    TogglePopup,         // Mandatory for open and close the applet
-    PopupClosed(Id),     // Mandatory for the applet to know if it's been closed
-    EnableDisable(bool), // Our custom message to update the isEnabled field on the model
+    TogglePopup,     // Mandatory for open and close the applet
+    PopupClosed(Id), // Mandatory for the applet to know if it's been closed
+
+    StopEntry,
+    StartEntry(String),
 }
 
 impl cosmic::Application for Window {
@@ -74,10 +79,42 @@ impl cosmic::Application for Window {
      *  there is no command so it returns a None value with the type of Task in its place.
      */
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<cosmic::app::Message<Self::Message>>) {
+        let brew_path = "/home/linuxbrew/.linuxbrew/bin";
+        let output = Command::new("clockify-cli") // Replace with your actual CLI tool
+            .env(
+                "PATH",
+                format!("{}:{}", brew_path, env::var("PATH").unwrap()),
+            ) // Ensure the stupid brew bin path is in our env
+            .arg("show")
+            .arg("--format")
+            .arg("{{.Description}}")
+            .output(); // This runs the command and gets the output
+                       //clockify-cli show --format "{{.Description}}"
+
+        let task = match output {
+            Ok(output) => {
+                if output.status.success() {
+                    format!("Task: {}", String::from_utf8_lossy(&output.stdout))
+                } else {
+                    format!("Task [ERR!]: {}", String::from_utf8_lossy(&output.stderr))
+                }
+            }
+            Err(e) => {
+                format!("Crash!!: {}", e)
+            }
+        };
+
+        let env = format!(
+            "PATH: {}",
+            env::var("PATH").unwrap_or_else(|_| "No PATH found".to_string())
+        );
+
         let window = Window {
-            core,                 // Set the incoming core
-            is_enabled: false,    // Set out isEnabled field to false to start disabled
-            ..Default::default()  // Set everything else to the default values
+            core,              // Set the incoming core
+            is_enabled: false, // Set out isEnabled field to false to start disabled
+            popup: None,
+            task_title: task,
+            debug_text: Some(env),
         };
 
         (window, Task::none())
@@ -127,7 +164,31 @@ impl cosmic::Application for Window {
                     self.popup = None;
                 }
             }
-            Message::EnableDisable(is_enabled) => self.is_enabled = is_enabled,
+            Message::StopEntry => {
+                let brew_path = "/home/linuxbrew/.linuxbrew/bin";
+                let _output = Command::new("clockify-cli") // Replace with your actual CLI tool
+                    .env(
+                        "PATH",
+                        format!("{}:{}", brew_path, env::var("PATH").unwrap()),
+                    ) // Ensure the stupid brew bin path is in our env
+                    .arg("out")
+                    .output(); // This runs the command and gets the output
+
+
+            }
+            Message::StartEntry(description) => {
+                let brew_path = "/home/linuxbrew/.linuxbrew/bin";
+                let _output = Command::new("clockify-cli") // Replace with your actual CLI tool
+                    .env(
+                        "PATH",
+                        format!("{}:{}", brew_path, env::var("PATH").unwrap()),
+                    ) // Ensure the stupid brew bin path is in our env
+                    .arg("in")
+                    .arg("-d")
+                    .arg(description)
+                    .output(); // This runs the command and gets the output
+
+            }
         }
         Task::none() // Again not doing anything that requires multi-threading here.
     }
@@ -138,19 +199,16 @@ impl cosmic::Application for Window {
      *  opened.
      */
     fn view(&self) -> Element<Self::Message> {
-        let button = button::custom(
-            Element::from(
-                row!(
-                    self.core.applet.text("Hallo Gertjan"),
-                    container(vertical_space().height(Length::Fixed(
-                        (self.core.applet.suggested_size(true).1
-                            + 2 * self.core.applet.suggested_padding(true))
-                            as f32
-                    )))
-                )
-                .align_y(Alignment::Center),
+        let button = button::custom(Element::from(
+            row!(
+                self.core.applet.text(self.task_title.clone()),
+                container(vertical_space().height(Length::Fixed(
+                    (self.core.applet.suggested_size(true).1
+                        + 2 * self.core.applet.suggested_padding(true)) as f32
+                )))
             )
-        )
+            .align_y(Alignment::Center),
+        ))
         .padding([0, 8])
         .width(Length::Shrink)
         .on_press(Message::TogglePopup);
@@ -174,7 +232,15 @@ impl cosmic::Application for Window {
             ))
             .add(settings::item(
                 "Enable/Disable",
-                toggler(self.is_enabled).on_toggle(Message::EnableDisable),
+                toggler(self.is_enabled)
+                    .on_toggle(|_| { Message::StartEntry("Test".to_string()) }),
+            ))
+            .add(settings::item(
+                "Is anything wrong?",
+                text(match &self.debug_text {
+                    Some(text) => text,
+                    None => "",
+                }),
             ));
 
         // Set the widget content list as the popup_container for the applet
