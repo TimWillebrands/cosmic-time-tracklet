@@ -11,14 +11,14 @@ use cosmic::iced_runtime::core::window;
 use cosmic::Element;
 // Widgets we're going to use
 use cosmic::widget::{
-    autosize, button, container, list_column, settings, text, text_input, toggler, vertical_space,
+    autosize, button, container, list_column, settings, text, text_input, vertical_space,
 };
 use once_cell::sync::Lazy;
-use std::env;
 use std::process::Command;
+use std::{env, fmt};
 
 // Every COSMIC Application and Applet MUST have an ID
-const ID: &str = "com.example.BasicApplet";
+const ID: &str = "com.tim_willebrands.time_tracklet";
 
 static AUTOSIZE_MAIN_ID: Lazy<cosmic::widget::Id> =
     Lazy::new(|| cosmic::widget::Id::new("autosize-main-henk"));
@@ -36,9 +36,33 @@ static AUTOSIZE_MAIN_ID: Lazy<cosmic::widget::Id> =
 pub struct Window {
     core: Core,
     popup: Option<Id>,
-    is_enabled: bool,
-    task_title: String,
+    task_title: TimeEntry,
+    form_description: Option<String>,
     debug_text: Option<String>,
+}
+/*
+*  Define our error types. These may be customized for our error handling cases.
+*  Now we will be able to write our own errors, defer to an underlying error
+*  implementation, or do something in between.
+*/
+#[derive(Debug, Clone)]
+enum TimeEntry {
+    NoEntry,
+    Entry(String),
+    FetchError(String),
+    CliError(String),
+}
+
+impl fmt::Display for TimeEntry {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let msg = match self {
+            TimeEntry::NoEntry => "- NO CURRENT TASK -".to_string(),
+            TimeEntry::Entry(desc) => format!("[Task] {}", desc),
+            TimeEntry::FetchError(err) => format!("[FetchErr] {}", err),
+            TimeEntry::CliError(err) => format!("[CliErr] {}", err),
+        };
+        write!(f, "{}", msg)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -47,7 +71,9 @@ pub enum Message {
     PopupClosed(Id), // Mandatory for the applet to know if it's been closed
 
     StopEntry,
-    StartEntry(String),
+    StartEntry,
+    UpdateFormDesc(String),
+    RefreshEntry,
 }
 
 impl cosmic::Application for Window {
@@ -79,29 +105,10 @@ impl cosmic::Application for Window {
      *  there is no command so it returns a None value with the type of Task in its place.
      */
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<cosmic::app::Message<Self::Message>>) {
-        let brew_path = "/home/linuxbrew/.linuxbrew/bin";
-        let output = Command::new("clockify-cli") // Replace with your actual CLI tool
-            .env(
-                "PATH",
-                format!("{}:{}", brew_path, env::var("PATH").unwrap()),
-            ) // Ensure the stupid brew bin path is in our env
-            .arg("show")
-            .arg("--format")
-            .arg("{{.Description}}")
-            .output(); // This runs the command and gets the output
-                       //clockify-cli show --format "{{.Description}}"
-
-        let task = match output {
-            Ok(output) => {
-                if output.status.success() {
-                    format!("Task: {}", String::from_utf8_lossy(&output.stdout))
-                } else {
-                    format!("Task [ERR!]: {}", String::from_utf8_lossy(&output.stderr))
-                }
-            }
-            Err(e) => {
-                format!("Crash!!: {}", e)
-            }
+        let current_entry = fetch_current_entry();
+        let task = match current_entry.clone() {
+            TimeEntry::Entry(t) => t,
+            _ => "".to_string(),
         };
 
         let env = format!(
@@ -110,10 +117,10 @@ impl cosmic::Application for Window {
         );
 
         let window = Window {
-            core,              // Set the incoming core
-            is_enabled: false, // Set out isEnabled field to false to start disabled
+            core, // Set the incoming core
             popup: None,
-            task_title: task,
+            task_title: current_entry.clone(),
+            form_description: Some(task.clone()),
             debug_text: Some(env),
         };
 
@@ -174,20 +181,35 @@ impl cosmic::Application for Window {
                     .arg("out")
                     .output(); // This runs the command and gets the output
 
-
+                self.form_description = None;
+                self.task_title = TimeEntry::NoEntry;
             }
-            Message::StartEntry(description) => {
-                let brew_path = "/home/linuxbrew/.linuxbrew/bin";
-                let _output = Command::new("clockify-cli") // Replace with your actual CLI tool
-                    .env(
-                        "PATH",
-                        format!("{}:{}", brew_path, env::var("PATH").unwrap()),
-                    ) // Ensure the stupid brew bin path is in our env
-                    .arg("in")
-                    .arg("-d")
-                    .arg(description)
-                    .output(); // This runs the command and gets the output
+            Message::StartEntry => {
+                if self.form_description.is_some() {
+                    let brew_path = "/home/linuxbrew/.linuxbrew/bin";
+                    let _output = Command::new("clockify-cli") // Replace with your actual CLI tool
+                        .env(
+                            "PATH",
+                            format!("{}:{}", brew_path, env::var("PATH").unwrap()),
+                        ) // Ensure the stupid brew bin path is in our env
+                        .arg("in")
+                        .arg("-d")
+                        .arg(self.form_description.clone().unwrap())
+                        .output(); // This runs the command and gets the output
 
+                    // This would be an optimistic update I s'pose
+                    let t = TimeEntry::Entry(self.form_description.clone().unwrap());
+                    self.task_title = t;
+                    self.form_description = None;
+                    self.popup = None;
+                }
+            }
+            Message::UpdateFormDesc(description) => {
+                self.form_description = Some(description);
+            }
+            Message::RefreshEntry => {
+                self.task_title = fetch_current_entry();
+                self.form_description = None;
             }
         }
         Task::none() // Again not doing anything that requires multi-threading here.
@@ -201,7 +223,7 @@ impl cosmic::Application for Window {
     fn view(&self) -> Element<Self::Message> {
         let button = button::custom(Element::from(
             row!(
-                self.core.applet.text(self.task_title.clone()),
+                self.core.applet.text(self.task_title.to_string()),
                 container(vertical_space().height(Length::Fixed(
                     (self.core.applet.suggested_size(true).1
                         + 2 * self.core.applet.suggested_padding(true)) as f32
@@ -223,17 +245,24 @@ impl cosmic::Application for Window {
             .padding(5)
             .spacing(0)
             .add(settings::item(
-                "Is this enabled?",
-                text(if self.is_enabled {
-                    "It is enabled!"
-                } else {
-                    "It's not enabled!"
-                }),
+                "Switch task",
+                text_input(
+                    "description",
+                    match &self.form_description {
+                        Some(t) => t.clone(),
+                        None => "".to_string(),
+                    },
+                )
+                .on_input(Message::UpdateFormDesc)
+                .on_submit(Message::StartEntry),
             ))
             .add(settings::item(
-                "Enable/Disable",
-                toggler(self.is_enabled)
-                    .on_toggle(|_| { Message::StartEntry("Test".to_string()) }),
+                "Stop current entry",
+                button::text("Stop").on_press(Message::StopEntry),
+            ))
+            .add(settings::item(
+                "Refresh entry",
+                button::text("Refresh").on_press(Message::RefreshEntry),
             ))
             .add(settings::item(
                 "Is anything wrong?",
@@ -245,5 +274,31 @@ impl cosmic::Application for Window {
 
         // Set the widget content list as the popup_container for the applet
         self.core.applet.popup_container(content_list).into()
+    }
+}
+
+fn fetch_current_entry() -> TimeEntry {
+    let brew_path = "/home/linuxbrew/.linuxbrew/bin";
+    let output = Command::new("clockify-cli") // Replace with your actual CLI tool
+        .env(
+            "PATH",
+            format!("{}:{}", brew_path, env::var("PATH").unwrap()),
+        ) // Ensure the stupid brew bin path is in our env
+        .arg("show")
+        .arg("--format")
+        .arg("{{.Description}}")
+        .output();
+    // This runs the command and gets the output
+    //clockify-cli show --format "{{.Description}}"
+
+    match output {
+        Ok(output) => {
+            if output.status.success() {
+                TimeEntry::Entry(String::from_utf8_lossy(&output.stdout).to_string())
+            } else {
+                TimeEntry::NoEntry
+            }
+        }
+        Err(e) => TimeEntry::CliError(format!("Crash!!: {}", e)),
     }
 }
