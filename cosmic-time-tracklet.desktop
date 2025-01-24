@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Cosmic Time Tracklet
+Type=Application
+Exec=cosmic-time-tracklet
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Iced;
+Icon=display-symbolic
+StartupNotify=true
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicHoverPopup=End
+X-OverflowPriority=10
