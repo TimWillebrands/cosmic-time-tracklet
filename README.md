@@ -17,7 +17,13 @@ Welcome to the COSMIC DE Time Tracklet! 🚀 This handy little applet lets you t
     Install Clockify CLI tool:
         Make sure you have Clockify CLI installed and properly configured.
 
-    Install COSMIC framework (if not already installed): Follow the COSMIC installation guide.
+    Build:
+        1) Use `cargo build --release`
+        2) From the project folder copy the binary we've just compiled to the applet folder. For example using: `sudo cp -f target/release/cosmic-applet-clockify`
+
+    Deploy:
+        1) Copy the `cosmic-time-tracklet.desktop` file to `/usr/share/applications`
+        2) Open up COSMIC Settings and navigate to Desktop->Panel and add the applet to the panel.
 
 ## Usage 🕹️
 
@@ -43,3 +49,6 @@ Feel free to tweak the code to fit your needs:
 ## Troubleshooting 🛠️
 
 If something goes wrong (e.g., Clockify CLI crashes), you can see debug information in the popup. This will show any errors that happen during the interaction with the Clockify API.
+
+## Thanks
+https://bhh32.com/posts/tutorials/cosmic_applet_tutorial
