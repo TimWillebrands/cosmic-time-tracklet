@@ -21,7 +21,7 @@ use std::{env, fmt};
 const ID: &str = "com.tim_willebrands.time_tracklet";
 
 static AUTOSIZE_MAIN_ID: Lazy<cosmic::widget::Id> =
-    Lazy::new(|| cosmic::widget::Id::new("autosize-main-henk"));
+    Lazy::new(|| cosmic::widget::Id::new("autosize-main-tracklet"));
 
 /*
 *  Every COSMIC model must be a struct data type.
