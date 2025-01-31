@@ -193,6 +193,8 @@ impl cosmic::Application for Window {
                             format!("{}:{}", brew_path, env::var("PATH").unwrap()),
                         ) // Ensure the stupid brew bin path is in our env
                         .arg("in")
+                        .arg("-p")
+                        .arg("67927ba24cc4a130e194394c") // Stoopid default project for now
                         .arg("-d")
                         .arg(self.form_description.clone().unwrap())
                         .output(); // This runs the command and gets the output
