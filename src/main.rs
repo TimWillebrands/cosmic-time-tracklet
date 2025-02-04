@@ -1,4 +1,5 @@
 mod window;
+mod idle_monitor;
 
 // Many thanks to: https://bhh32.com/posts/tutorials/cosmic_applet_tutorial
 

@@ -14,8 +14,11 @@ use cosmic::widget::{
     autosize, button, container, list_column, settings, text, text_input, vertical_space,
 };
 use once_cell::sync::Lazy;
+
 use std::process::Command;
 use std::{env, fmt};
+
+use crate::idle_monitor;
 
 // Every COSMIC Application and Applet MUST have an ID
 const ID: &str = "com.tim_willebrands.time_tracklet";
