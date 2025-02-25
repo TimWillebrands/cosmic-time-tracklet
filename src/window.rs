@@ -1,5 +1,6 @@
 // Mandatory COSMIC imports
-use cosmic::app::Core;
+use cosmic::app::{self, Core};
+use cosmic::cctk::wayland_client::EventQueue;
 use cosmic::iced::{
     platform_specific::shell::commands::popup::{destroy_popup, get_popup},
     widget::row,
@@ -42,7 +43,8 @@ pub struct Window {
     task_title: TimeEntry,
     form_description: Option<String>,
     debug_text: Option<String>,
-    //idle_monitor: IdleMonitor,
+    idle_monitor: IdleMonitor,
+    event_queue: EventQueue<IdleMonitor>,
 }
 /*
 *  Define our error types. These may be customized for our error handling cases.
@@ -78,6 +80,10 @@ pub enum Message {
     StartEntry,
     UpdateFormDesc(String),
     RefreshEntry,
+
+    UserIdle,
+    UserResume,
+    Tick,
 }
 
 impl cosmic::Application for Window {
@@ -108,7 +114,7 @@ impl cosmic::Application for Window {
      *  The function returns our model struct initialized and an Option<Task>, in this case
      *  there is no command so it returns a None value with the type of Task in its place.
      */
-    fn init(core: Core, _flags: Self::Flags) -> (Self, Task<cosmic::app::Message<Self::Message>>) {
+    fn init(core: Core, _flags: Self::Flags) -> (Self, Task<app::Message<Self::Message>>) {
         let current_entry = fetch_current_entry();
         let task = match current_entry.clone() {
             TimeEntry::Entry(t) => t,
@@ -124,14 +130,16 @@ impl cosmic::Application for Window {
         //  implement on_idle&on_resumed so the user gets a popup when we've resumed
         //  in this popup the need to confirm they're still working on the same thing
         //  if not the current task should be stopped
-        let (mut idle_monitor, mut event_queue) = IdleMonitor::new(1000 * 5, || {
-            println!("Idle!");
-        }, || {
-            println!("Resume!");
-        }).unwrap();
-
-        // TODO: Integrate this into some loop or something 
-        let _ = idle_monitor.dispatch_events(&mut event_queue).unwrap(); 
+        let (idle_monitor, event_queue) = IdleMonitor::new(
+            1000 * 5,
+            || {
+                let _ = app::Message::App(Message::UserIdle);
+            },
+            || {
+                let _ = app::Message::App(Message::UserResume);
+            },
+        )
+        .unwrap();
 
         let window = Window {
             core, // Set the incoming core
@@ -139,9 +147,16 @@ impl cosmic::Application for Window {
             task_title: current_entry.clone(),
             form_description: Some(task.clone()),
             debug_text: Some(env),
+            idle_monitor,
+            event_queue,
         };
 
         (window, Task::none())
+    }
+
+    // Add this subscription handler to your Application implementation
+    fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
+        cosmic::iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick)
     }
 
     // Create what happens when the applet is closed
@@ -152,7 +167,7 @@ impl cosmic::Application for Window {
 
     // Here is the update function, it's the one that handles all of the messages that
     // are passed within the applet.
-    fn update(&mut self, message: Self::Message) -> Task<cosmic::app::Message<Self::Message>> {
+    fn update(&mut self, message: Self::Message) -> Task<app::Message<Self::Message>> {
         // match on what message was sent
         match message {
             // Handle the TogglePopup message
@@ -229,6 +244,19 @@ impl cosmic::Application for Window {
             Message::RefreshEntry => {
                 self.task_title = fetch_current_entry();
                 self.form_description = None;
+            }
+            Message::UserIdle => {
+                println!("Idle!");
+            }
+            Message::UserResume => {
+                println!("Resume!");
+            }
+            Message::Tick => {
+                println!("dispatching events: ");
+                // Process Wayland events
+                if let Err(e) = self.idle_monitor.dispatch_events(&mut self.event_queue) {
+                    eprintln!("Error dispatching events: {}", e);
+                }
             }
         }
         Task::none() // Again not doing anything that requires multi-threading here.
