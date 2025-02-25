@@ -18,7 +18,7 @@ use once_cell::sync::Lazy;
 use std::process::Command;
 use std::{env, fmt};
 
-use crate::idle_monitor;
+use crate::idle_monitor::IdleMonitor;
 
 // Every COSMIC Application and Applet MUST have an ID
 const ID: &str = "com.tim_willebrands.time_tracklet";
@@ -42,6 +42,7 @@ pub struct Window {
     task_title: TimeEntry,
     form_description: Option<String>,
     debug_text: Option<String>,
+    //idle_monitor: IdleMonitor,
 }
 /*
 *  Define our error types. These may be customized for our error handling cases.
@@ -118,6 +119,19 @@ impl cosmic::Application for Window {
             "PATH: {}",
             env::var("PATH").unwrap_or_else(|_| "No PATH found".to_string())
         );
+
+        // TODO:
+        //  implement on_idle&on_resumed so the user gets a popup when we've resumed
+        //  in this popup the need to confirm they're still working on the same thing
+        //  if not the current task should be stopped
+        let (mut idle_monitor, mut event_queue) = IdleMonitor::new(1000 * 5, || {
+            println!("Idle!");
+        }, || {
+            println!("Resume!");
+        }).unwrap();
+
+        // TODO: Integrate this into some loop or something 
+        let _ = idle_monitor.dispatch_events(&mut event_queue).unwrap(); 
 
         let window = Window {
             core, // Set the incoming core
