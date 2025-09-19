@@ -1,0 +1,23 @@
+---
+alwaysApply: true
+description: Always keep notes of what you're doing in SCRATCHPAD.md
+---
+
+# Scratchpad logging rule
+
+Always keep a running log of actions and decisions in [SCRATCHPAD.md](mdc:SCRATCHPAD.md) at the repo root.
+
+Guidelines:
+
+- Append a concise, timestamped bullet for each meaningful step (search, edit, command, fix, decision).
+- Use this format (UTC time preferred):
+
+```text
+- 2025-09-19 00:00 UTC — Short note of action/result
+```
+
+- Append new entries at the end of the file.
+- Keep it brief; avoid secrets or credentials.
+- If `SCRATCHPAD.md` is missing, create it.
+- Do not block core tasks if the scratchpad write fails; retry when possible.
+
