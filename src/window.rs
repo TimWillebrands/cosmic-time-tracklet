@@ -1,6 +1,5 @@
 // Mandatory COSMIC imports
 use cosmic::app::{self, Core};
-use cosmic::cctk::wayland_client::EventQueue;
 use cosmic::iced::{
     platform_specific::shell::commands::popup::{destroy_popup, get_popup},
     widget::row,
@@ -20,6 +19,9 @@ use std::process::Command;
 use std::{env, fmt};
 
 use crate::idle_monitor::IdleMonitor;
+use std::sync::mpsc::{self, Receiver};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 // Every COSMIC Application and Applet MUST have an ID
 const ID: &str = "com.tim_willebrands.time_tracklet";
@@ -43,8 +45,10 @@ pub struct Window {
     task_title: TimeEntry,
     form_description: Option<String>,
     debug_text: Option<String>,
-    idle_monitor: IdleMonitor,
-    event_queue: EventQueue<IdleMonitor>,
+    idle_rx: Receiver<Message>,
+    _idle_thread: Option<JoinHandle<()>>,
+    idle_started_at: Option<Instant>,
+    idle_timeout_ms: u32,
 }
 /*
 *  Define our error types. These may be customized for our error handling cases.
@@ -55,7 +59,6 @@ pub struct Window {
 enum TimeEntry {
     NoEntry,
     Entry(String),
-    FetchError(String),
     CliError(String),
 }
 
@@ -64,7 +67,6 @@ impl fmt::Display for TimeEntry {
         let msg = match self {
             TimeEntry::NoEntry => "- NO CURRENT TASK -".to_string(),
             TimeEntry::Entry(desc) => format!("[Task] {}", desc),
-            TimeEntry::FetchError(err) => format!("[FetchErr] {}", err),
             TimeEntry::CliError(err) => format!("[CliErr] {}", err),
         };
         write!(f, "{}", msg)
@@ -126,20 +128,24 @@ impl cosmic::Application for Window {
             env::var("PATH").unwrap_or_else(|_| "No PATH found".to_string())
         );
 
-        // TODO:
-        //  implement on_idle&on_resumed so the user gets a popup when we've resumed
-        //  in this popup the need to confirm they're still working on the same thing
-        //  if not the current task should be stopped
-        let (idle_monitor, event_queue) = IdleMonitor::new(
-            1000 * 5,
-            || {
-                let _ = app::Message::App(Message::UserIdle);
+        // Idle channel + background dispatcher
+        let idle_timeout_ms = 1000 * 5;
+        let (tx, rx) = mpsc::channel::<Message>();
+        let idle_thread = IdleMonitor::spawn(
+            idle_timeout_ms,
+            {
+                let tx = tx.clone();
+                move || {
+                    let _ = tx.send(Message::UserIdle);
+                }
             },
-            || {
-                let _ = app::Message::App(Message::UserResume);
+            {
+                move || {
+                    let _ = tx.send(Message::UserResume);
+                }
             },
         )
-        .unwrap();
+        .ok();
 
         let window = Window {
             core, // Set the incoming core
@@ -147,8 +153,10 @@ impl cosmic::Application for Window {
             task_title: current_entry.clone(),
             form_description: Some(task.clone()),
             debug_text: Some(env),
-            idle_monitor,
-            event_queue,
+            idle_rx: rx,
+            _idle_thread: idle_thread,
+            idle_started_at: None,
+            idle_timeout_ms,
         };
 
         (window, Task::none())
@@ -156,7 +164,7 @@ impl cosmic::Application for Window {
 
     // Add this subscription handler to your Application implementation
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
-        cosmic::iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick)
+        cosmic::iced::time::every(std::time::Duration::from_millis(200)).map(|_| Message::Tick)
     }
 
     // Create what happens when the applet is closed
@@ -247,15 +255,29 @@ impl cosmic::Application for Window {
             }
             Message::UserIdle => {
                 println!("Idle!");
+                let now = Instant::now();
+                let dur = Duration::from_millis(self.idle_timeout_ms as u64);
+                self.idle_started_at = Some(now.checked_sub(dur).unwrap_or(now));
             }
             Message::UserResume => {
                 println!("Resume!");
+                // Placeholder for prompt logic; timestamps recorded for future use
             }
             Message::Tick => {
-                println!("dispatching events: ");
-                // Process Wayland events
-                if let Err(e) = self.idle_monitor.dispatch_events(&mut self.event_queue) {
-                    eprintln!("Error dispatching events: {}", e);
+                // Drain channel messages from idle monitor
+                while let Ok(msg) = self.idle_rx.try_recv() {
+                    match msg {
+                        Message::UserIdle => {
+                            println!("Idle!");
+                            let now = Instant::now();
+                            let dur = Duration::from_millis(self.idle_timeout_ms as u64);
+                            self.idle_started_at = Some(now.checked_sub(dur).unwrap_or(now));
+                        }
+                        Message::UserResume => {
+                            println!("Resume!");
+                        }
+                        _ => {}
+                    }
                 }
             }
         }

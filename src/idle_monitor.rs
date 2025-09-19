@@ -3,15 +3,17 @@
  *  https://smithay.github.io/book/client/general/registry.html
  */
 use cosmic::cctk::wayland_client::{
-    globals::{registry_queue_init, GlobalListContents},
-    protocol::{wl_registry, wl_seat},
-    Connection, Dispatch, DispatchError, EventQueue, QueueHandle,
+    globals::{registry_queue_init, GlobalList, GlobalListContents},
+    protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat},
+    Connection, Dispatch, EventQueue, QueueHandle,
 };
+
 use cosmic::cctk::wayland_protocols::ext::idle_notify::v1::client::{
     ext_idle_notification_v1::{Event, ExtIdleNotificationV1},
     ext_idle_notifier_v1::{Event as NotifyEvent, ExtIdleNotifierV1},
 };
 use std::error::Error;
+use std::thread;
 
 /// The IdleMonitor encapsulates the idle-notification object.
 pub struct IdleMonitor {
@@ -20,8 +22,12 @@ pub struct IdleMonitor {
     idle_notifier: Option<ExtIdleNotifierV1>,
     idle_notification: Option<ExtIdleNotificationV1>, // Store this to keep it alive and receive events
     seat: Option<wl_seat::WlSeat>, // Option because seat might not be available immediately or at all
+    pointer: Option<wl_pointer::WlPointer>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
     idle_timeout_ms: u32,
-    queue: QueueHandle<IdleMonitor>
+    _queue: QueueHandle<IdleMonitor>,
+    _globals: GlobalList, // Maintain registry lifetime
+    _conn: Connection,    // Maintain connection lifetime
 }
 
 impl IdleMonitor {
@@ -39,27 +45,36 @@ impl IdleMonitor {
     {
         // Connect to the Wayland display.
         let conn = Connection::connect_to_env()?;
-        let queue = conn.new_event_queue::<IdleMonitor>();
-        let ret = registry_queue_init::<IdleMonitor>(&conn);
-        let (_globals, _qh) = ret.map_err(|e| format!("Failed to initialize registry: {}", e))?;
-        let qh = queue.handle(); // Get the handle here
-                                 //
-        let s = Self {
+
+        // Initialize registry WITH OUR QUEUE HANDLE
+        let (globals, mut event_queue) = registry_queue_init::<IdleMonitor>(&conn)
+            .map_err(|e| format!("registryRegistry init failed: {}", e))?;
+
+        let qh = event_queue.handle();
+        //let globals_list = globals.contents().clone_list(); 
+        //let registry = globals.registry();
+
+        let mut state = Self {
             on_idle: Box::new(on_idle),       // Box the callback
             on_resumed: Box::new(on_resumed), // Box the callback
             idle_timeout_ms,
             idle_notifier: None,
             idle_notification: None,
             seat: None,
-            queue: qh,
+            pointer: None,
+            keyboard: None,
+            _queue: qh,
+            _conn: conn,
+            _globals: globals,
         };
 
-        Ok((s, queue))
+        // Perform initial roundtrip to get registry events
+        event_queue.roundtrip(&mut state)?;
+
+        Ok((state, event_queue))
     }
 
-    pub fn dispatch_events(&mut self, queue: &mut EventQueue<IdleMonitor>) -> Result<usize, DispatchError> {
-        queue.dispatch_pending(self)
-    }
+    
 
     fn request_idle_notification(&mut self, qh: &QueueHandle<IdleMonitor>) {
         if let (Some(notifier), Some(seat)) = (self.idle_notifier.as_ref(), self.seat.as_ref()) {
@@ -68,6 +83,38 @@ impl IdleMonitor {
             self.idle_notification =
                 Some(notifier.get_idle_notification(self.idle_timeout_ms, seat, qh, ()));
         }
+    }
+
+    /// Spawns a background thread that owns the Wayland connection and event queue,
+    /// and continuously dispatches events, invoking the provided callbacks.
+    pub fn spawn<FIdle, FResumed>(
+        idle_timeout_ms: u32,
+        mut on_idle: FIdle,
+        mut on_resumed: FResumed,
+    ) -> std::io::Result<thread::JoinHandle<()>>
+    where
+        FIdle: FnMut() + Send + 'static,
+        FResumed: FnMut() + Send + 'static,
+    {
+        thread::Builder::new()
+            .name("idle-monitor-loop".into())
+            .spawn(move || {
+                // Build monitor and queue on this thread to satisfy thread-affinity.
+                let (mut state, mut event_queue) = IdleMonitor::new(
+                    idle_timeout_ms,
+                    move || on_idle(),
+                    move || on_resumed(),
+                )
+                .expect("Failed to initialize IdleMonitor");
+
+                loop {
+                    // Block until there are events, then dispatch.
+                    if let Err(err) = event_queue.blocking_dispatch(&mut state) {
+                        eprintln!("Wayland dispatch error: {}", err);
+                        break;
+                    }
+                }
+            })
     }
 }
 
@@ -80,18 +127,24 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for IdleMonitor {
         _conn: &Connection,
         qh: &QueueHandle<IdleMonitor>,
     ) {
+        println!("wl_registry...?");
         if let wl_registry::Event::Global {
             name,
             interface,
             version,
         } = event
         {
-            println!("wl_registry! happened!!!");
+            println!("wl_registry dispatch happened!!!");
             match interface.as_str() {
                 "wl_seat" => {
                     // Bind to the wl_seat global
                     let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, version, qh, ());
                     state.seat = Some(seat);
+                    // Also bind pointer and keyboard to observe input events
+                    if let Some(seat_ref) = state.seat.as_ref() {
+                        state.pointer = Some(seat_ref.get_pointer(qh, ()));
+                        state.keyboard = Some(seat_ref.get_keyboard(qh, ()));
+                    }
                     // Now that we have a seat, check if we also have the idle notifier and can set up notification
                     state.request_idle_notification(qh);
                 }
@@ -159,5 +212,33 @@ impl Dispatch<wl_seat::WlSeat, ()> for IdleMonitor {
         _conn: &Connection,
         _qh: &QueueHandle<IdleMonitor>,
     ) {
+    }
+}
+
+impl Dispatch<wl_pointer::WlPointer, ()> for IdleMonitor {
+    fn event(
+        state: &mut IdleMonitor,
+        _pointer: &wl_pointer::WlPointer,
+        _event: cosmic::cctk::wayland_client::protocol::wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<IdleMonitor>,
+    ) {
+        // Any pointer activity should be treated as resume/user activity.
+        (state.on_resumed)();
+    }
+}
+
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for IdleMonitor {
+    fn event(
+        state: &mut IdleMonitor,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _event: cosmic::cctk::wayland_client::protocol::wl_keyboard::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<IdleMonitor>,
+    ) {
+        // Any keyboard activity should be treated as resume/user activity.
+        (state.on_resumed)();
     }
 }
