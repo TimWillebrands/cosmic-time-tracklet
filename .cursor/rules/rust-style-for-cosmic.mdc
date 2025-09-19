@@ -1,0 +1,31 @@
+---
+alwaysApply: false
+globs: *.rs
+---
+# Rust Style and Concurrency for COSMIC Applet
+
+## Naming and Types
+- Use descriptive names for messages and state (e.g., `TimeEntry`, `idle_started_at`).
+- Prefer enums to represent UI/IO states over ad-hoc strings.
+- Avoid `any`-like erasure; keep types explicit and clear.
+
+## Control Flow & Errors
+- Use early returns and guard clauses for clarity.
+- Propagate errors meaningfully; log with context. Avoid swallowing errors silently.
+
+## Threading & Wayland
+- Wayland types (`Connection`, `EventQueue`, `QueueHandle`, protocol objects) are thread-affine. Create and use them on the same thread.
+- Offload Wayland event dispatch to a dedicated thread using `IdleMonitor::spawn(...)`. Do not attempt to pump Wayland from the UI thread.
+- Communicate back to the UI using `std::sync::mpsc` (or `crossbeam-channel`) with non-blocking `try_recv` in `Message::Tick`.
+
+## Applet Instance Safety
+- Keep per-instance state inside `Window` and avoid global mutable singletons.
+- For IDs (`Id`, widget `Id`s), generate per instance and never reuse across processes.
+
+## Performance
+- Keep `subscription` tick handlers lightweight; drain channels and return.
+- Avoid blocking `std::process::Command::output()` in the UI thread for long operations; consider async or background threads if it becomes slow.
+
+## UI
+- Size the panel button with `autosize` and avoid fixed pixel assumptions; use `suggested_size` and `suggested_padding` from `Core`.
+- Close the popup on successful action to keep UX responsive.

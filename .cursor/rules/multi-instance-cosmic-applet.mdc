@@ -1,0 +1,44 @@
+---
+alwaysApply: true
+---
+# Multi-Instance COSMIC Applet Guidance
+
+This applet may run multiple instances simultaneously in multi-monitor or multi-panel setups. Treat each instance as an independent process with its own state and resources.
+
+## Design Rules
+- Per-instance state: Keep all UI and runtime state inside the `Window` model in [src/window.rs](mdc:src/window.rs).
+- No global singletons for mutable state. If shared, use read-only constants or config; otherwise prefer per-instance channels.
+- Thread affinity: Wayland objects created in [src/idle_monitor.rs](mdc:src/idle_monitor.rs) must be used on the same thread. Use `IdleMonitor::spawn(...)` to own the connection and event queue on a dedicated thread per applet instance.
+- Do not store Wayland handles (`Connection`, `EventQueue`, `QueueHandle`, protocol proxies) in `Window`. Create and use them only inside the background thread via `IdleMonitor::spawn(...)`.
+- Message delivery: Communicate idle/resume events via per-instance `std::sync::mpsc::channel` to the `Window` instance. Do not share channels across instances.
+
+## Instance Isolation Checklist
+- Avoid static mut / global caches for UI state or `TimeEntry`.
+- Do not store process-wide singletons for `wl_seat`, `ExtIdleNotifierV1`, or event queues.
+- Ensure popup `Id`s are created per `Window` instance and not reused.
+- When writing to files (prefs/logs), include instance-safe paths (e.g., per monitor or window id) or use OS temp dirs; avoid clobbering.
+  - Example: `let path = std::env::temp_dir().join(format!("clockify_applet_{}", self.core.main_window_id().unwrap()));`
+
+## Subscriptions & Timers
+- Use `time::every(...)` per instance for ticks; keep work small to avoid jank.
+- Typical cadence is 200–500 ms; drain channels and return quickly.
+- Drain the per-instance idle channel inside `Message::Tick` to avoid blocking the UI thread.
+
+## Debug & Logging
+- Prefix logs with the applet window or instance id when possible to differentiate instances.
+  - Example:
+```
+if let Some(id) = self.core.main_window_id() {
+    eprintln!("[applet {:?}] {}", id, "Idle!");
+}
+```
+- Keep stdout/stderr noise minimal; prefer structured messages for development.
+
+## UI
+- Use `autosize` and `Core`-provided `suggested_size`/`suggested_padding` for proper panel sizing.
+- Return the applet style for transparency:
+```
+fn style(&self) -> Option<cosmic::iced_runtime::Appearance> {
+    Some(cosmic::applet::style())
+}
+```

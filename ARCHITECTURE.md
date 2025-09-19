@@ -21,10 +21,10 @@ See `Cargo.toml` for complete versions and feature flags.
 1. Process starts via `cosmic::applet::run::<Window>(())`.
 2. `Window::init`:
    - Fetches the current Clockify entry (`fetch_current_entry`).
-   - Initializes Wayland idle monitoring (`IdleMonitor::new`) and stores both the monitor state and an `EventQueue`.
-   - Prepares initial UI model state.
-3. A 1-second subscription (`time::every(1s)`) emits `Message::Tick`:
-   - The applet flushes and dispatches Wayland events via the stored `EventQueue` to drive idle/resume callbacks.
+  - Initializes Wayland idle monitoring by spawning a background dispatcher via `IdleMonitor::spawn(...)`; receives a per-instance `mpsc::Receiver` and a `JoinHandle`.
+  - Prepares initial UI model state.
+3. A 200 ms subscription (`time::every(200ms)`) emits `Message::Tick`:
+  - The applet drains the per-instance idle channel; Wayland dispatch happens on the background thread.
 4. User actions (button clicks, popup form submit) dispatch messages that update model state and invoke Clockify CLI commands.
 
 ## Modules and Responsibilities
@@ -38,19 +38,19 @@ See `Cargo.toml` for complete versions and feature flags.
   - COSMIC `Core` and popup `Id` management.
   - Current task state (`TimeEntry`).
   - Popup form state, debug text (currently the process `PATH`).
-  - Idle integration: `idle_monitor: IdleMonitor` and `event_queue: EventQueue<IdleMonitor>`.
+  - Idle integration: per-instance idle channel `idle_rx: mpsc::Receiver<Message>` and background thread handle `_idle_thread: JoinHandle<()>`.
 - `Message` enum covers UI events, task actions, and idle/resume/tick.
 - `impl Application for Window`:
   - `init`:
     - Preloads the current task with `clockify-cli show`.
-    - Sets up `IdleMonitor` with idle/resume callbacks.
-  - `subscription`: emits `Tick` every second.
+    - Sets up `IdleMonitor::spawn(...)` with idle/resume callbacks.
+  - `subscription`: emits `Tick` every 200 ms.
   - `update`: handles:
     - Popup open/close using COSMIC popup commands.
     - `StartEntry`/`StopEntry` by spawning `clockify-cli`.
     - `RefreshEntry` to re-fetch the current entry.
     - `UserIdle`/`UserResume` (currently log-only).
-    - `Tick` to dispatch Wayland events through `IdleMonitor`.
+    - `Tick` to drain the per-instance idle channel; Wayland dispatch occurs in the background thread.
   - `view`: applet button in the panel displays the current task string, uses `autosize`.
   - `view_window`: popup content with:
     - Text input to start/switch task (submits on Enter).
@@ -66,7 +66,7 @@ See `Cargo.toml` for complete versions and feature flags.
   - Handles global registry events and binds `wl_seat` and `ext_idle_notifier_v1`.
   - Requests an idle notification with configured timeout (`idle_timeout_ms`).
   - Dispatches protocol events; translates `Idled`/`Resumed` into provided callbacks.
-- Returns both the monitor state and its `EventQueue` to the applet, which manually flushes/dispatches each tick.
+- Owns the Wayland connection and event queue on a dedicated background thread, running a `blocking_dispatch` loop to drive callbacks; communicates back to the `Window` via a per-instance channel.
 
 ## UI Architecture
 
@@ -88,7 +88,7 @@ See `Cargo.toml` for complete versions and feature flags.
 - **Idle**:
   - `UserIdle`/`UserResume`: currently print to stdout; designed for future UX (e.g., confirm resume/stop).
 - **Tick**:
-  - Flushes and dispatches Wayland events via `IdleMonitor::dispatch_events` to drive idle notifications.
+  - Drains the per-instance idle channel using non-blocking `try_recv` to process `UserIdle` and `UserResume`.
 
 ## External Integrations
 

@@ -1,0 +1,32 @@
+---
+alwaysApply: true
+---
+# Project Structure and Entry Points
+
+- Refer to the architectural overview: [ARCHITECTURE.md](mdc:ARCHITECTURE.md)
+- User documentation and setup: [README.md](mdc:README.md)
+
+## Applet Basics
+- **Applet ID**: `com.tim_willebrands.time_tracklet`
+- **Binary name**: `cosmic-applet-clockify`
+- **Desktop entry**: [cosmic-time-tracklet.desktop](mdc:cosmic-time-tracklet.desktop)
+
+## Code Map
+- Entrypoint: [src/main.rs](mdc:src/main.rs)
+  - Calls `cosmic::applet::run::<Window>(())` to start the applet process.
+- Applet model and UI: [src/window.rs](mdc:src/window.rs)
+  - Implements `cosmic::Application` for `Window`.
+  - Handles messages, popup lifecycle, and Clockify CLI calls.
+- Wayland idle detection: [src/idle_monitor.rs](mdc:src/idle_monitor.rs)
+  - Encapsulates `ext_idle_notifier_v1` and manages a background dispatch thread.
+- Dependencies and features: [Cargo.toml](mdc:Cargo.toml)
+  - Uses `libcosmic` with `applet`, `wayland`, `tokio` features.
+
+## Runtime Model
+- One applet process per panel instance (multi-monitor setups can launch multiple instances).
+- UI runs on the COSMIC main thread; Wayland idle events are dispatched on a dedicated thread per instance.
+
+## Common Tasks
+- Build: `cargo build --release`
+- Install binary: copy `target/release/cosmic-applet-clockify` to your system applet path.
+- Register applet: install the desktop entry and add via COSMIC Settings.
