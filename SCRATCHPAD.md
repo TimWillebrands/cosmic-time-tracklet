@@ -17,3 +17,4 @@
 - 2025-09-19 00:23 UTC — Scoped rust-style rule to *.rs via globs (manual apply retained).
 - 2025-09-19 00:24 UTC — Updated ARCHITECTURE.md to reflect background idle thread and Tick channel draining.
  - 2025-09-19 00:30 UTC — Silenced warnings: removed unused DispatchError import; deleted unused dispatch_events; underscored unused IdleMonitor fields; removed unused FetchError variant; renamed unused wl_seat dispatch param. Clean build with zero warnings.
+ - 2025-09-19 00:40 UTC — Diagnosis: `GlobalList` owns `wl_registry` events; our `Dispatch<wl_registry, GlobalListContents>` won't fire. Need to bind `wl_seat`/`ext_idle_notifier_v1` via `GlobalList` after initial roundtrip and rely on `wl_pointer`/`wl_keyboard` and `ExtIdleNotificationV1` events for activity.

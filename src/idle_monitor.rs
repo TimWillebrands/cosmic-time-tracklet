@@ -63,13 +63,39 @@ impl IdleMonitor {
             seat: None,
             pointer: None,
             keyboard: None,
-            _queue: qh,
+            _queue: qh.clone(),
             _conn: conn,
             _globals: globals,
         };
 
         // Perform initial roundtrip to get registry events
         event_queue.roundtrip(&mut state)?;
+
+        // Bind required globals via GlobalList (registry events are handled internally)
+        {
+            let registry = state._globals.registry();
+            let globals_list = state._globals.contents().clone_list();
+
+            for global in globals_list {
+                let interface = global.interface.as_str();
+                if interface == "wl_seat" && state.seat.is_none() {
+                    let seat = registry.bind::<wl_seat::WlSeat, _, _>(global.name, global.version, &qh, ());
+                    state.seat = Some(seat);
+                    if let Some(seat_ref) = state.seat.as_ref() {
+                        state.pointer = Some(seat_ref.get_pointer(&qh, ()));
+                        state.keyboard = Some(seat_ref.get_keyboard(&qh, ()));
+                    }
+                } else if interface == "ext_idle_notifier_v1" && state.idle_notifier.is_none() {
+                    if global.version >= 1 {
+                        let idle_notifier = registry.bind::<ExtIdleNotifierV1, _, _>(global.name, global.version, &qh, ());
+                        state.idle_notifier = Some(idle_notifier);
+                    }
+                }
+            }
+
+            // If both are present, request the idle notification now
+            state.request_idle_notification(&qh);
+        }
 
         Ok((state, event_queue))
     }

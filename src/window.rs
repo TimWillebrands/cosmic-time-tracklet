@@ -250,6 +250,7 @@ impl cosmic::Application for Window {
                 self.form_description = Some(description);
             }
             Message::RefreshEntry => {
+                println!("Refreshing entry!");
                 self.task_title = fetch_current_entry();
                 self.form_description = None;
             }
